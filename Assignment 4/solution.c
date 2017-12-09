@@ -1,6 +1,9 @@
 /*            PURPOSE : Simple framework for ray-tracing
  
         PREREQUISITES : matrix.h
+        Ben Cassidy - CS3388 Assignment 4 Solution
+        bcassid5 - 250 808 910
+
  */
 
 #include <X11/Xlib.h>
@@ -30,7 +33,7 @@
 #define UPy              0.0
 #define UPz              1.0
 
-#define Lx               0.0
+#define Lx               10.0
 #define Ly               0.0
 #define Lz               10.0
 
@@ -387,12 +390,108 @@ color_t color_add(color_t c1, color_t c2) {
     return s ;
 }
 
-color_t shade(light_t *light, object_t *object, dmatrix_t *e, dmatrix_t *d, color_t color, color_t background) {
-
-    color.r = background.r ;
-    color.g = background.g ;
-    color.b = background.b ;
-
+color_t shade(light_t *light, object_t *object, dmatrix_t *e, dmatrix_t *d, color_t color, color_t background, int level) {
+    
+    level--;
+	int h, k, j, p;
+	color_t tempcolor;
+	dmatrix_t *Te, *Td, *Tdn, *L, *S, *V, *R, *I, *Ie, *N, *Ts, *Tl, *Ti, *Ti2;
+	double t0[nobjects], Id, Is, t1[nobjects]; 
+    
+    //converting all e and d with each minv
+	for (k = 0; k < nobjects; k++) {
+		
+		Te = dmat_mult(&object[k].Minv, e);
+		Td = dmat_mult(&object[k].Minv, d);
+		Tdn = dmat_normalize(Td);
+        
+        //intersection calculation
+		t0[k]=((object[k].intersection_function))(Te, Tdn);
+        
+        //good habits - clear the matrices 
+		delete_dmatrix(Te);
+		delete_dmatrix(Td);
+		delete_dmatrix(Tdn);
+	}
+	
+	h = find_min_hit_time(t0);
+    
+    if (h != -1) {
+        //convert with minv
+    	Ts = dmat_mult(&object[h].Minv,&light->position);
+    	Te = dmat_mult(&object[h].Minv, e);
+		Td = dmat_mult(&object[h].Minv, d);
+		Tdn = dmat_normalize(Td);
+		
+		I = intersection_coordinates(Te, Tdn, t0[h]);
+        
+        //calculate normal to light source, specular reflection
+        N = dmat_normalize(normal_to_surface (&object[h], I));
+        //calculate normal for specular reflection
+		V = dmat_normalize(vector_to_center_of_projection(I, Te));
+		S = dmat_normalize(vector_to_light_source (I, Ts));
+		R = dmat_normalize(vector_to_specular_reflection(I,S));
+        L = dmat_normalize(vector_to_specular_reflection(N,V));
+        
+        //calculate dot product (*with error checking bug fixed*)
+        Id = ddot_product(N, S);
+        
+		if (Id <0) { Id = 0; }
+        //calculate dot product (*with error checking bug fixed*)
+        Is = ddot_product(R, V);
+		if (Is < 0) { Is = 0; }
+        
+        //calculate all colour values and incorporation specular reflection
+		color.r = 	MAX_INTENSITY * light->color.r*light->intensity.r*(Id * object[h].diffuse_coeff * object[h].diffuse_color.r+object[h].ambient_coeff*object[h].ambient_color.r+Is*object[h].specular_coeff*object[h].specular_color.r);
+		color.b = 	MAX_INTENSITY * light->color.b*light->intensity.b*(Id * object[h].diffuse_coeff * object[h].diffuse_color.b+object[h].ambient_coeff*object[h].ambient_color.b+Is*object[h].specular_coeff*object[h].specular_color.b);
+		color.g = 	MAX_INTENSITY * light->color.g*light->intensity.g*(Id * object[h].diffuse_coeff * object[h].diffuse_color.g+object[h].ambient_coeff*object[h].ambient_color.g+Is*object[h].specular_coeff*object[h].specular_color.g);
+		
+		//calculate variables for shadowing
+		Ti2 = dmat_mult(&object[h].M, I);
+		Ie = dmat_mult(&object[h].M, S);
+		Ti2->m[1][1] = Ti2->m[1][1] + Ie->m[1][1]*EPSILON ;
+    	Ti2->m[2][1] = Ti2->m[2][1] + Ie->m[2][1]*EPSILON ;
+    	Ti2->m[3][1] = Ti2->m[3][1] + Ie->m[3][1]*EPSILON ;
+    	
+    	
+    	
+    	for (j = 0; j < nobjects; j++) {
+            
+            //calculate intersections
+            Te = dmat_mult(&object[j].Minv, Ti2);
+            Td = dmat_mult(&object[j].Minv, Ie);
+            Tdn = dmat_normalize(Td);
+            
+            t1[j]=((object[j].intersection_function))(Te, Tdn);
+            delete_dmatrix(Te);
+            delete_dmatrix(Td);
+            delete_dmatrix(Tdn);
+        }
+	
+    	p = find_min_hit_time(t1);
+        
+        if (p != -1) {			
+    		color.r = MAX_INTENSITY * light->color.r*light->intensity.r*(object[h].ambient_coeff*object[h].ambient_color.r);
+		    color.b = MAX_INTENSITY * light->color.b*light->intensity.b*(object[h].ambient_coeff*object[h].ambient_color.b);
+		    color.g = MAX_INTENSITY * light->color.g*light->intensity.g*(object[h].ambient_coeff*object[h].ambient_color.g);
+        }
+        
+    	delete_dmatrix(Ie);
+		delete_dmatrix(Ti2);
+        
+        //reflection and recursion calculations
+		if (level > 0) {
+		
+    	Ti = dmat_mult(&object[h].M, I);
+		Tl = dmat_mult(&object[h].M, L);
+		
+		Ti->m[1][1] = Ti->m[1][1] + Tl->m[1][1]*EPSILON ;
+    	Ti->m[2][1] = Ti->m[2][1] + Tl->m[2][1]*EPSILON ;
+    	Ti->m[3][1] = Ti->m[3][1] + Tl->m[3][1]*EPSILON ;
+    	
+    	color= color_add(color_mult(1.0-object[h].reflectivity, color), color_mult(object[h].reflectivity, shade(light, object, Ti, Tl, color, background, level)));
+    	}
+    }
     return color ;
 }
 
@@ -515,6 +614,94 @@ int main() {
     
     object[nobjects] = *build_object(SPHERE,&M,ambient_color,diffuse_color,specular_color,ambient_coeff,diffuse_coeff,specular_coeff,f,reflectivity) ;
     
+
+    /* Create a sphere */
+    
+    dmat_alloc(&M,4,4) ;
+    M = *dmat_identity(&M) ;
+
+    M.m[1][4] = 3.0 ;
+    M.m[2][4] = 0.0 ;
+    M.m[3][4] = -1.0 ;
+    M.m[3][3] = 1.0 ;
+    
+    reflectivity = 0.3 ;
+    
+    specular_color.r = 1.0 ;
+    specular_color.g = 0.0 ;
+    specular_color.b = 0.0 ;
+    specular_coeff = 0.4 ;
+    f = 10.0 ;
+    
+    diffuse_color.r = 1.0 ;
+    diffuse_color.g = 0.0 ;
+    diffuse_color.b = 0.0 ;
+    diffuse_coeff = 0.4 ;
+    
+    ambient_color.r = 1.0 ;
+    ambient_color.g = 0.0 ;
+    ambient_color.b = 0.0 ;
+    ambient_coeff = 0.2 ;
+    
+    object[nobjects] = *build_object(SPHERE,&M,ambient_color,diffuse_color,specular_color,ambient_coeff,diffuse_coeff,specular_coeff,f,reflectivity) ;
+    
+    /* Create a sphere */
+
+    dmat_alloc(&M,4,4) ;
+    M = *dmat_identity(&M) ;
+
+    M.m[1][4] = -3.0 ;
+    M.m[2][4] = 0.0 ;
+    M.m[3][3] = 2.0 ;
+    
+    reflectivity = 0.3 ;
+    
+    specular_color.r = 0.0 ;
+    specular_color.g = 1.0 ;
+    specular_color.b = 0.0 ;
+    specular_coeff = 0.4 ;
+    f = 10.0 ;
+    
+    diffuse_color.r = 0.0 ;
+    diffuse_color.g = 1.0 ;
+    diffuse_color.b = 0.0 ;
+    diffuse_coeff = 0.4 ;
+    
+    ambient_color.r = 0.0 ;
+    ambient_color.g = 1.0 ;
+    ambient_color.b = 0.0 ;
+    ambient_coeff = 0.2 ;
+    
+    object[nobjects] = *build_object(SPHERE,&M,ambient_color,diffuse_color,specular_color,ambient_coeff,diffuse_coeff,specular_coeff,f,reflectivity) ;
+    
+    /* Create a sphere */
+    dmat_alloc(&M,4,4) ;
+    M = *dmat_identity(&M) ;
+
+    M.m[1][4] = 0.0 ;
+    M.m[2][4] = 3.0 ;
+    M.m[2][2] = 2.0 ;
+    M.m[3][4] = -1.0 ;
+    reflectivity = 0.3 ;
+    
+    specular_color.r = 0.0 ;
+    specular_color.g = 0.0 ;
+    specular_color.b = 1.0 ;
+    specular_coeff = 0.4 ;
+    f = 10.0 ;
+    
+    diffuse_color.r = 0.0 ;
+    diffuse_color.g = 0.0 ;
+    diffuse_color.b = 1.0 ;
+    diffuse_coeff = 0.4 ;
+    
+    ambient_color.r = 0.0 ;
+    ambient_color.g = 0.0 ;
+    ambient_color.b = 1.0 ;
+    ambient_coeff = 0.2 ;
+    
+    object[nobjects] = *build_object(SPHERE,&M,ambient_color,diffuse_color,specular_color,ambient_coeff,diffuse_coeff,specular_coeff,f,reflectivity) ;
+    
     /* Create tiled floor with planes */
     
     for (i = -4 ; i < 4 ; i++) {
@@ -527,7 +714,7 @@ int main() {
             M.m[2][4] = (double)2*j ;
             M.m[3][4] = -2.0 ;
     
-            reflectivity = 0.5 ;
+            reflectivity = 0.6 ;
     
             specular_color.r = 1.0 ;
             specular_color.g = 1.0 ;
@@ -567,7 +754,12 @@ int main() {
             for (i = 0 ; i < Window.width ; i++) {
                 for (j = 0  ; j < Window.height ; j++) {
                     direction = ray_direction(&Camera,&Window,height,width,(double)i,(double)j) ;
-                    pixel = shade(&light,object,&Camera.E,direction,pixel,background) ;
+                    //set pixel colour values
+                    pixel.r=0;
+                    pixel.b=0;
+                    pixel.g=0;
+                    //
+                    pixel = shade(&light,object,&Camera.E,direction,pixel,background, 3) ;
                     SetCurrentColorX(d,&(DefaultGC(d,s)),(int)pixel.r,(int)pixel.g,(int)pixel.b) ;
                     SetPixelX(d,w,s,i,Window.height - (j + 1)) ;
                     delete_dmatrix(direction) ;
